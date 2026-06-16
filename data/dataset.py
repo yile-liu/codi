@@ -86,14 +86,13 @@ def _load_cache(cache_dir, n_samples):
 
 
 def build_codi_dataset(
-    tokenizer, *, sources=("cruxeval",), n_samples: int = -1,
-    max_seq_len: int = 4096, max_frames: int = -1,
-    split: str = "train", cache_dir: str | None = None
+    tokenizer, *, sources=("mbpp", "humaneval", "pyx"), n_samples: int = -1,
+    max_seq_len: int = 4096, max_frames: int = -1, cache_dir: str | None = None
 ) -> list[dict]:
     """CODI examples (prompt/reasoning/answer) over ``sources``, or a precomputed cache."""
     if cache_dir:
         return _load_cache(cache_dir, n_samples)
-    rows = rows_for_sources(sources, split)
+    rows = rows_for_sources(sources)
     if n_samples > 0:
         rows = rows[:n_samples]
     out = [
@@ -106,39 +105,14 @@ def build_codi_dataset(
     return [ex for ex in out if ex is not None]
 
 
-def cruxeval_split(rows, split: str = "all", val_stride: int = 5):
-    """Deterministic interleaved train/val split of the CRUXEval rows.
-
-    ``val`` = every ``val_stride``-th row (800/5 = 160 val, 640 train);
-    interleaving keeps the length/difficulty distribution matched across splits.
-    Single source of truth: both training (``build_dataset``) and eval
-    (``run_eval_codi``) import this so the splits never drift.
-    ``split`` in {"train", "val", "all"}.
-    """
-    if split == "all":
-        return list(rows)
-    is_val = lambda i: i % val_stride == 0
-    if split == "val":
-        return [r for i, r in enumerate(rows) if is_val(i)]
-    if split == "train":
-        return [r for i, r in enumerate(rows) if not is_val(i)]
-    raise ValueError(f"split must be train/val/all, got {split!r}")
-
-
-
-def rows_for_sources(sources, split: str):
-    """Merge {id,code,input,output} rows across sources. cruxeval honors the
-    train/val split; other sources are train-only augmentation (skipped for val)."""
+def rows_for_sources(sources):
+    """Merge {id,code,input,output} rows across sources (all rows; train vs test
+    is split by dataset, e.g. cruxeval is held out for eval)."""
     from . import sources as _src
 
     rows = []
     for name in sources:
-        r = _src.load_one(name)
-        if name.strip().lower() == "cruxeval":
-            r = cruxeval_split(r, split)
-        elif split == "val":
-            continue
-        for i, row in enumerate(r):
+        for i, row in enumerate(_src.load_one(name)):
             missing = [k for k in ("id", "code", "input", "output") if k not in row]
             if missing:
                 raise ValueError(f"{name} row {i} missing keys: {missing}")
@@ -151,14 +125,13 @@ def rows_for_sources(sources, split: str):
 
 
 def build_dataset(
-    tokenizer, *, sources=("cruxeval",), n_samples: int = -1,
-    max_seq_len: int = 8192, max_frames: int = -1,
-    split: str = "all", cache_dir: str | None = None
+    tokenizer, *, sources=("mbpp", "humaneval", "pyx"), n_samples: int = -1,
+    max_seq_len: int = 8192, max_frames: int = -1, cache_dir: str | None = None
 ) -> list[tuple[list[int], list[int]]]:
     """Tokenized trace examples over ``sources``, or a precomputed cache."""
     if cache_dir:
         return [(e["input_ids"], e["labels"]) for e in _load_cache(cache_dir, n_samples)]
-    rows = rows_for_sources(sources, split)
+    rows = rows_for_sources(sources)
     if n_samples > 0:
         rows = rows[:n_samples]
     examples = (

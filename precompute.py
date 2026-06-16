@@ -61,8 +61,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--mode", choices=["sft", "codi"], default="sft")
-    ap.add_argument("--sources", nargs="+", default=["cruxeval"])
-    ap.add_argument("--split", choices=["train", "val", "all"], default="train")
+    ap.add_argument("--sources", nargs="+", default=["mbpp", "humaneval", "pyx"])
     ap.add_argument("--n_samples", type=int, default=-1)
     ap.add_argument("--max_seq_len", type=int, default=4096)
     ap.add_argument("--max_frames", type=int, default=-1)
@@ -73,7 +72,7 @@ def main():
     ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
 
-    rows = rows_for_sources(args.sources, args.split)
+    rows = rows_for_sources(args.sources)
     if args.n_samples > 0:
         rows = rows[: args.n_samples]
 

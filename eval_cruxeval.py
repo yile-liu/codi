@@ -7,15 +7,14 @@ Greedy => pass@1 is the exact-match fraction. Reuses cwm_andre eval logic.
 
 import argparse
 import json
-import os
-import re
 import subprocess
 import sys
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from data.dataset import _prompt_str, cruxeval_split
+from data.dataset import _prompt_str
+from data.sources import load_cruxeval
 from tokens import add_trace_tokens, token_ids
 
 ARG_SEP, FRAME_SEP, RETURN_SEP = "<|arg_sep|>", "<|frame_sep|>", "<|return_sep|>"
@@ -51,21 +50,9 @@ def check_correct(code: str, expected: str, predicted: str, timeout: float = 3.0
         return False
 
 
-def load_rows(split: str):
-    local_dir = os.environ.get("CRUXEVAL_DIR")
-    if local_dir and os.path.isdir(local_dir):
-        from datasets import load_from_disk
-        rows = list(load_from_disk(local_dir))
-    else:
-        from datasets import load_dataset
-        rows = list(load_dataset("cruxeval-org/cruxeval", split="test"))
-    return cruxeval_split(rows, split)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--split", default="val")
     ap.add_argument("--n_samples", type=int, default=-1)
     ap.add_argument("--max_new_tokens", type=int, default=2048)
     ap.add_argument("--out", default="")
@@ -76,7 +63,7 @@ def main():
     eot_id = token_ids(tok)["<|end_of_text|>"]
     model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16).cuda().eval()
 
-    rows = load_rows(args.split)
+    rows = load_cruxeval()
     if args.n_samples > 0:
         rows = rows[: args.n_samples]
 
@@ -100,7 +87,7 @@ def main():
             print(f"  {i + 1}/{len(rows)}  pass@1={n_correct / (i + 1):.4f}", flush=True)
 
     n = len(rows)
-    print(f"\nCRUXEval-O [{args.split}] pass@1={n_correct / n:.4f}  "
+    print(f"\nCRUXEval-O pass@1={n_correct / n:.4f}  "
           f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)")
     if args.out:
         with open(args.out, "w") as f:

@@ -2,7 +2,7 @@
 
 Add a converted dataset by running its folder's convert.py (saves ./data via
 save_to_disk) and listing it in _LOCAL. cruxeval keeps its own Hub-fallback
-loader + deterministic train/val split (see dataset.cruxeval_split).
+loader and is held out entirely for eval (eval_cruxeval.py), never trained on.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from pathlib import Path
 _LOCAL = {"mbpp": "MBPP", "humaneval": "HumanEval", "pyx": "PyX"}  # name -> folder, data in ./data
 
 
-def _load_cruxeval_rows():
-    """Prefer a local save_to_disk copy; HF builder FileLock dies on NFS caches."""
+def load_cruxeval():
+    """Full CRUXEval-O (the held-out test set). Prefer a local save_to_disk copy;
+    the HF builder FileLock dies on NFS caches."""
     local_dir = os.environ.get("CRUXEVAL_DIR")
     if local_dir and os.path.isdir(local_dir):
         from datasets import load_from_disk
@@ -28,7 +29,7 @@ def _load_cruxeval_rows():
 def load_one(name: str) -> list[dict]:
     key = name.strip().lower()
     if key == "cruxeval":
-        return _load_cruxeval_rows()
+        return load_cruxeval()
     if key in _LOCAL:
         from datasets import load_from_disk
 

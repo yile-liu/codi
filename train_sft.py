@@ -45,9 +45,9 @@ def main():
     ap.add_argument("--batch_size", type=int, default=4)
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--max_steps", type=int, default=-1)  # >0 for smoke
-    ap.add_argument("--split", default="train")
-    ap.add_argument("--sources", nargs="+", default=["cruxeval"])
+    ap.add_argument("--sources", nargs="+", default=["mbpp", "humaneval", "pyx"])
     ap.add_argument("--cache_dir", default=None)  # load offline tokenized examples from precompute.py
+    ap.add_argument("--resume", default=None)  # checkpoint dir, or True to auto-detect latest
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, use_fast=True)
@@ -59,7 +59,7 @@ def main():
     resize_and_init(model, tok, n_added)
 
     ds = build_dataset(tok, sources=args.sources, cache_dir=args.cache_dir,
-                       n_samples=args.n_samples, max_seq_len=args.max_seq_len, max_frames=args.max_frames, split=args.split)
+                       n_samples=args.n_samples, max_seq_len=args.max_seq_len, max_frames=args.max_frames)
     print(f"{len(ds)} trace examples")
 
     targs = TrainingArguments(
@@ -77,7 +77,8 @@ def main():
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=5,
-        save_strategy="no",
+        save_strategy="epoch",
+        save_total_limit=3,
         report_to=[],
     )
     trainer = Trainer(
@@ -86,7 +87,7 @@ def main():
         train_dataset=ds,
         data_collator=lambda b: collate(b, tok.pad_token_id),
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=args.resume)
     trainer.save_model(args.output_dir)
     tok.save_pretrained(args.output_dir)
 

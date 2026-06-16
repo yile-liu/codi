@@ -11,10 +11,12 @@ CODI 自蒸馏 × CWM 执行 trace：用小模型（Qwen2.5-Coder）训练潜在
 ## 数据格式与离线缓存
 - 原始数据：`{id, code, input, output}`；`code` 定义函数并绑定 `f = entry_point`，`input` 是调用参数源码。
 - SFT cache：`{input_ids, labels, row_id}`；CODI cache：`{prompt_ids, reasoning_ids, answer_ids, row_id}`。
+- 训练/测试按数据集划分：训练用 `mbpp humaneval pyx`，cruxeval 整体留作测试集（`eval_cruxeval.py`），不参与训练。
+- `precompute.py` 纯 CPU、多进程并行，在登录节点离线跑（`--max_frames` 提前截断循环密集的巨型 trace）。
 
 ```bash
-python precompute.py --model model_weights/qwen2.5-coder-1.5b --mode sft --sources cruxeval mbpp humaneval pyx --split train --out data/cache/sft-train --workers 16
-python precompute.py --model model_weights/sft-coder-1.5b --mode codi --sources cruxeval mbpp humaneval pyx --split train --out data/cache/codi-train --workers 16
+python precompute.py --model model_weights/qwen2.5-coder-1.5b --mode sft  --sources mbpp humaneval pyx --max_frames 2000 --out data/cache/sft_train  --workers 48
+python precompute.py --model model_weights/qwen2.5-coder-1.5b --mode codi --sources mbpp humaneval pyx --max_frames 2000 --out data/cache/codi_train --workers 48
 ```
 
 ## 阶段
