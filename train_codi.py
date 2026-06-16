@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
+from transformers.trainer_utils import get_last_checkpoint
 
 from data.dataset import IGNORE_INDEX, build_codi_dataset
 from tokens import add_trace_tokens, token_ids
@@ -122,15 +123,6 @@ class CodiTrainer(Trainer):
         out = model(inputs["examples"])
         return (out["loss"], out) if return_outputs else out["loss"]
 
-    def _save(self, output_dir=None, state_dict=None):
-        # Eval-ready checkpoint: backbone (HF format) + tokenizer + projector.
-        # Resume = warm-start by pointing --model here (loads the projector too).
-        output_dir = output_dir or self.args.output_dir
-        os.makedirs(output_dir, exist_ok=True)
-        self.model.model.save_pretrained(output_dir)
-        self.tok.save_pretrained(output_dir)
-        torch.save(self.model.prj.state_dict(), os.path.join(output_dir, "thought_projector.pt"))
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -161,10 +153,6 @@ def main():
     model = CodiModel(base, latent_start_id=ids["<|latent_start|>"], latent_end_id=ids["<|latent_end|>"],
                       latent_steps=args.latent_steps, a=args.alpha, b=args.beta, g=args.gamma,
                       kd_all_layers=args.kd_all_layers)
-    prj_ckpt = os.path.join(args.model, "thought_projector.pt")
-    if os.path.exists(prj_ckpt):  # warm-resume from a prior CODI checkpoint
-        model.prj.load_state_dict(torch.load(prj_ckpt, map_location="cpu"))
-        print(f"resumed projector from {prj_ckpt}")
 
     ds = build_codi_dataset(tok, sources=args.sources, cache_dir=args.cache_dir,
                             n_samples=args.n_samples, max_seq_len=args.max_seq_len, max_frames=args.max_frames)
@@ -185,7 +173,8 @@ def main():
         ddp_find_unused_parameters=False,
         logging_steps=5,
         save_strategy="epoch",
-        save_total_limit=3,
+        save_total_limit=2,
+        save_safetensors=False,  # CodiModel wrapper has tied weights; use torch.save
         report_to=[],
         remove_unused_columns=False,
         label_names=[],
@@ -194,9 +183,13 @@ def main():
         model=model, args=targs, train_dataset=ds,
         data_collator=lambda b: {"examples": b},
     )
-    trainer.tok = tok  # used by CodiTrainer._save
-    trainer.train()
-    trainer.save_model(args.output_dir)  # final backbone + tok + projector
+    # Native checkpoints (CodiModel wrapper + optimizer) auto-resume if interrupted.
+    ckpt = get_last_checkpoint(args.output_dir) if os.path.isdir(args.output_dir) else None
+    trainer.train(resume_from_checkpoint=ckpt)
+    # Final: export the shared backbone + tokenizer + projector for Stage-3 eval.
+    model.model.save_pretrained(args.output_dir)
+    tok.save_pretrained(args.output_dir)
+    torch.save(model.prj.state_dict(), f"{args.output_dir}/thought_projector.pt")
 
 
 if __name__ == "__main__":

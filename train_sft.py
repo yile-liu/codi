@@ -5,6 +5,7 @@ Plain next-token CE; labels mask the prompt (done in data.dataset.build_example)
 """
 
 import argparse
+import os
 
 import torch
 from transformers import (
@@ -13,6 +14,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 from data.dataset import IGNORE_INDEX, build_dataset
 from tokens import add_trace_tokens, resize_and_init
@@ -47,7 +49,6 @@ def main():
     ap.add_argument("--max_steps", type=int, default=-1)  # >0 for smoke
     ap.add_argument("--sources", nargs="+", default=["mbpp", "humaneval", "pyx"])
     ap.add_argument("--cache_dir", default=None)  # load offline tokenized examples from precompute.py
-    ap.add_argument("--resume", default=None)  # checkpoint dir, or True to auto-detect latest
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, use_fast=True)
@@ -87,7 +88,9 @@ def main():
         train_dataset=ds,
         data_collator=lambda b: collate(b, tok.pad_token_id),
     )
-    trainer.train(resume_from_checkpoint=args.resume)
+    # Auto-resume from the latest epoch checkpoint if the job was interrupted.
+    ckpt = get_last_checkpoint(args.output_dir) if os.path.isdir(args.output_dir) else None
+    trainer.train(resume_from_checkpoint=ckpt)
     trainer.save_model(args.output_dir)
     tok.save_pretrained(args.output_dir)
 

@@ -2,7 +2,7 @@
 #SBATCH -A berzelius-2026-167
 #SBATCH -C thin
 #SBATCH --gpus=4
-#SBATCH -t 04:00:00
+#SBATCH -t 1-00:00:00
 #SBATCH -J sft_trace
 #SBATCH -o sft_trace_%j.log
 
