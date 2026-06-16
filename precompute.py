@@ -14,6 +14,10 @@ import signal
 from pathlib import Path
 
 os.environ.setdefault("USE_TORCH", "0")
+# Single-thread the Rust tokenizer; we parallelize at the process level, and
+# one rayon pool per worker exhausts the node's thread limit (WouldBlock panic).
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("RAYON_NUM_THREADS", "1")
 
 from datasets import Dataset
 from data.dataset import build_codi_example, build_example, rows_for_sources

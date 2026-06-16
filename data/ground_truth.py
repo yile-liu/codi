@@ -106,8 +106,10 @@ class _GroundTruthTracer:
         return current
 
     def _trace(self, frame: FrameType, event: str, arg: Any):  # noqa: ANN001
-        # Abort early on loop-heavy programs before they blow up memory/time.
-        if self.max_frames > 0 and len(self.frames) >= self.max_frames:
+        # Abort early on loop-heavy programs; gate on our own file so the global
+        # trace doesn't raise inside unrelated GC/__del__ frames.
+        if (self.max_frames > 0 and len(self.frames) >= self.max_frames
+                and frame.f_code.co_filename == _FILENAME):
             raise _FramesExceeded
         # Only follow execution at or below the entry point's scope.
         if self._entry_frame_id is None:
