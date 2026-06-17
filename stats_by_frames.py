@@ -1,6 +1,6 @@
 """Offline post-hoc: stratify a CRUXEval-O eval by ground-truth trace length.
 
-No change to eval/training. Reads eval_cruxeval.py's --out JSON (per-sample
+No change to eval/training. Reads eval_cruxeval_*.py's --out JSON (per-sample
 id+correct), recomputes each id's LINE-frame count (= #latent spans = #KD
 anchors, the verifiable-CODI difficulty axis) via the model-free tracer, bins,
 and reports pass@1 per bin. Run from codi_trace/:
@@ -36,7 +36,7 @@ def bin_label(edges: list[int], k: int) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--results", required=True, help="eval_cruxeval.py --out JSON")
+    ap.add_argument("--results", required=True, help="eval_cruxeval_*.py --out JSON")
     ap.add_argument("--edges", default=",".join(map(str, DEFAULT_EDGES)),
                     help="comma-sep bin lower edges; last bin is [edge,inf)")
     ap.add_argument("--max_frames", type=int, default=5000,

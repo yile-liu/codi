@@ -17,7 +17,7 @@ torchrun --nproc_per_node=4 --master_port=$((20000 + RANDOM % 10000)) train_codi
   --output_dir model_weights/codi-coder-1.5b-ckpt10392 \
   --max_seq_len 6144 \
   --latent_steps 1 \
-  --epochs 10 \
+  --epochs 5 \
   --lr 1e-5 \
   --batch_size 1 \
   --grad_accum 4

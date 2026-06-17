@@ -11,7 +11,7 @@ CODI 自蒸馏 × CWM 执行 trace：用小模型（Qwen2.5-Coder）训练潜在
 ## 数据格式与离线缓存
 - 原始数据：`{id, code, input, output}`；`code` 定义函数并绑定 `f = entry_point`，`input` 是调用参数源码。
 - SFT cache：`{input_ids, labels, row_id}`；CODI cache：`{prompt_ids, reasoning_ids, answer_ids, row_id}`。
-- 训练/测试按数据集划分：训练用 `mbpp humaneval pyx`，cruxeval 整体留作测试集（`eval_cruxeval.py`），不参与训练。
+- 训练/测试按数据集划分：训练用 `mbpp humaneval pyx`，cruxeval 整体留作测试集（`eval_cruxeval_sft.py` 显式 trace / `eval_cruxeval_codi.py` latent），不参与训练。
 - `precompute.py` 纯 CPU、多进程并行，在登录节点离线跑（`--max_frames` 提前截断循环密集的巨型 trace）。
 
 ```bash
