@@ -82,7 +82,7 @@ def main():
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=5,
         save_strategy="epoch",
-        save_total_limit=3,
+        save_total_limit=None,  # keep all epoch checkpoints
         report_to=report_to,
     )
     trainer = Trainer(

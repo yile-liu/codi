@@ -7,10 +7,12 @@ Greedy => pass@1 is the exact-match fraction. Reuses cwm_andre eval logic.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
 import torch
+import torch.distributed as dist
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from data.dataset import _prompt_str
@@ -58,20 +60,32 @@ def main():
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
+    # DDP-style data parallelism for inference: torchrun sets RANK/WORLD_SIZE/LOCAL_RANK.
+    ddp = "RANK" in os.environ
+    rank = int(os.environ.get("RANK", 0))
+    world = int(os.environ.get("WORLD_SIZE", 1))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if ddp:
+        dist.init_process_group("nccl")
+    torch.cuda.set_device(local_rank)
+
     tok = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     add_trace_tokens(tok)  # idempotent; ensures trace tokens present
     eot_id = token_ids(tok)["<|end_of_text|>"]
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16).cuda().eval()
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, torch_dtype=torch.bfloat16).to(local_rank).eval()
 
     rows = load_cruxeval()
     if args.n_samples > 0:
         rows = rows[: args.n_samples]
+    n = len(rows)
+    shard = rows[rank::world]  # disjoint round-robin split across ranks
 
     n_correct = n_fmt = 0
     results = []
-    for i, r in enumerate(rows):
+    for i, r in enumerate(shard):
         prompt = _prompt_str(r["code"], r["input"])
-        ids = torch.tensor([tok.encode(prompt, add_special_tokens=False)]).cuda()
+        ids = torch.tensor([tok.encode(prompt, add_special_tokens=False)]).to(local_rank)
         with torch.no_grad():
             out = model.generate(
                 ids, max_new_tokens=args.max_new_tokens, do_sample=False,
@@ -83,16 +97,28 @@ def main():
         n_fmt += pred is not None
         n_correct += ok
         results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok})
-        if (i + 1) % 20 == 0:
-            print(f"  {i + 1}/{len(rows)}  pass@1={n_correct / (i + 1):.4f}", flush=True)
+        if rank == 0 and (i + 1) % 20 == 0:
+            print(f"  rank0 {i + 1}/{len(shard)}  pass@1={n_correct / (i + 1):.4f}", flush=True)
 
-    n = len(rows)
-    print(f"\nCRUXEval-O pass@1={n_correct / n:.4f}  "
-          f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)")
-    if args.out:
-        with open(args.out, "w") as f:
-            json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n,
-                       "n": n, "results": results}, f, indent=2)
+    # Reduce metrics and gather per-row results across ranks.
+    if ddp:
+        t = torch.tensor([n_correct, n_fmt], device=local_rank)
+        dist.all_reduce(t)
+        n_correct, n_fmt = int(t[0]), int(t[1])
+        gathered = [None] * world
+        dist.gather_object(results, gathered if rank == 0 else None, dst=0)
+        if rank == 0:
+            results = [x for part in gathered for x in part]
+
+    if rank == 0:
+        print(f"\nCRUXEval-O pass@1={n_correct / n:.4f}  "
+              f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)")
+        if args.out:
+            with open(args.out, "w") as f:
+                json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n,
+                           "n": n, "results": results}, f, indent=2)
+    if ddp:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
