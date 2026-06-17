@@ -16,6 +16,7 @@ torchrun --nproc_per_node=4 --master_port=$((20000 + RANDOM % 10000)) train_codi
   --model model_weights/sft-coder-1.5b \
   --output_dir model_weights/codi-coder-1.5b \
   --cache_dir data/cache/codi_train \
+  --max_seq_len 2048 \
   --latent_steps 1 \
   --epochs 10 \
   --lr 1e-5 \

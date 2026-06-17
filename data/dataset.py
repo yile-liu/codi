@@ -106,7 +106,8 @@ def build_codi_dataset(
 ) -> list[dict]:
     """CODI examples (prompt/reasoning/answer) over ``sources``, or a precomputed cache."""
     if cache_dir:
-        return _load_cache(cache_dir, n_samples)
+        ex = _load_cache(cache_dir, n_samples)
+        return [e for e in ex if len(e["prompt_ids"]) + len(e["trace_ids"]) <= max_seq_len]
     rows = rows_for_sources(sources)
     if n_samples > 0:
         rows = rows[:n_samples]
