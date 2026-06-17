@@ -57,6 +57,7 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--n_samples", type=int, default=-1)
     ap.add_argument("--max_new_tokens", type=int, default=2048)
+    ap.add_argument("--batch_size", type=int, default=8)
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -71,6 +72,7 @@ def main():
 
     tok = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     add_trace_tokens(tok)  # idempotent; ensures trace tokens present
+    tok.padding_side = "left"  # left-pad so all generated tokens start at the same offset
     eot_id = token_ids(tok)["<|end_of_text|>"]
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16).to(local_rank).eval()
@@ -83,22 +85,23 @@ def main():
 
     n_correct = n_fmt = 0
     results = []
-    for i, r in enumerate(shard):
-        prompt = _prompt_str(r["code"], r["input"])
-        ids = torch.tensor([tok.encode(prompt, add_special_tokens=False)]).to(local_rank)
+    for bi, batch_start in enumerate(range(0, len(shard), args.batch_size)):
+        batch = shard[batch_start: batch_start + args.batch_size]
+        enc = tok([_prompt_str(r["code"], r["input"]) for r in batch],
+                  return_tensors="pt", padding=True, add_special_tokens=False).to(local_rank)
         with torch.no_grad():
-            out = model.generate(
-                ids, max_new_tokens=args.max_new_tokens, do_sample=False,
-                eos_token_id=eot_id, pad_token_id=tok.pad_token_id or eot_id,
-            )
-        gen = tok.decode(out[0, ids.shape[1]:], skip_special_tokens=False)
-        pred = extract_answer_trace_full(gen)
-        ok = pred is not None and check_correct(r["code"], r["output"], pred)
-        n_fmt += pred is not None
-        n_correct += ok
-        results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok})
-        if rank == 0 and (i + 1) % 20 == 0:
-            print(f"  rank0 {i + 1}/{len(shard)}  pass@1={n_correct / (i + 1):.4f}", flush=True)
+            out = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False,
+                                 eos_token_id=eot_id, pad_token_id=eot_id)
+        for j, r in enumerate(batch):
+            gen = tok.decode(out[j, enc["input_ids"].shape[1]:], skip_special_tokens=False)
+            pred = extract_answer_trace_full(gen)
+            ok = pred is not None and check_correct(r["code"], r["output"], pred)
+            n_fmt += pred is not None
+            n_correct += ok
+            results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok})
+        if rank == 0 and (bi + 1) % 5 == 0:
+            done = batch_start + len(batch)
+            print(f"  rank0 {done}/{len(shard)}  pass@1={n_correct/done:.4f}", flush=True)
 
     # Reduce metrics and gather per-row results across ranks.
     if ddp:

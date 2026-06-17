@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH -A berzelius-2026-167
-#SBATCH -C thin
-#SBATCH --gpus=2
+#SBATCH -A naiss2026-3-261
+# -C selects node type (nodes with 4×A100-40GB); --gpus-per-node allocates how many this job uses.
+#SBATCH -C 4xA100
+#SBATCH --gpus-per-node=A100:2
 #SBATCH -t 02:00:00
 #SBATCH -J eval_crux
 #SBATCH -o eval_crux_%j.log
 
-# Stage-1 baseline eval: CRUXEval-O full-trace pass@1 (greedy). 2x A100 DDP.
-# MODEL/N/OUT overridable; defaults = SFT checkpoint-6928 smoke (50 rows).
+# Pre-requisite: CRUXEVAL_DIR must point to a save_to_disk copy of the test split.
+# MODEL/N/OUT overridable via --export when submitting with sbatch.
+export PATH=/mimer/NOBACKUP/groups/assert-kth/siruil/conda_envs/CWM/bin:$PATH
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 PYTHONHASHSEED=0
-# CRUXEval-O held-out test set (local save_to_disk copy; avoids the offline Hub fetch).
-export CRUXEVAL_DIR="${CRUXEVAL_DIR:-/proj/assert-berzelius/users/x_sirli/datasets/cruxeval_test}"
 
 torchrun --nproc_per_node=2 --master_port=$((20000 + RANDOM % 10000)) eval_cruxeval.py \
   --model "${MODEL:-model_weights/sft-coder-1.5b/checkpoint-6928}" \

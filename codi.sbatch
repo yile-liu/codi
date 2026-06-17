@@ -1,22 +1,21 @@
 #!/bin/bash
-#SBATCH -A berzelius-2026-167
-#SBATCH -C thin
-#SBATCH --gpus=4
+#SBATCH -A naiss2026-3-261
+#SBATCH -C 4xA100
+#SBATCH --gpus-per-node=A100:4
 #SBATCH -t 1-00:00:00
 #SBATCH -J codi_trace
 #SBATCH -o codi_trace_%j.log
 
-# Stage 2b: per-frame (multi-span) CODI self-distillation. teacher=student init from Stage-1 SFT.
-# 4x A100-40GB DDP. Cache built offline on the login node (precompute.py, CPU-only).
-export PATH=/proj/assert-berzelius/users/x_sirli/conda/envs/CWM/bin:$PATH
+# Full-layer KD (kd_layers=None default) + multi-anchor (single_anchor=False default).
+# 4x A100-40GB DDP. Cache from precompute.py (cache_dir default); paged_adamw_8bit for 6144 seq len.
+export PATH=/mimer/NOBACKUP/groups/assert-kth/siruil/conda_envs/CWM/bin:$PATH
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 PYTHONHASHSEED=0
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 torchrun --nproc_per_node=4 --master_port=$((20000 + RANDOM % 10000)) train_codi.py \
-  --model model_weights/sft-coder-1.5b \
-  --output_dir model_weights/codi-coder-1.5b \
-  --cache_dir data/cache/codi_train \
-  --max_seq_len 2048 \
+  --model model_weights/sft-coder-1.5b/checkpoint-10392 \
+  --output_dir model_weights/codi-coder-1.5b-ckpt10392 \
+  --max_seq_len 6144 \
   --latent_steps 1 \
   --epochs 10 \
   --lr 1e-5 \

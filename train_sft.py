@@ -78,6 +78,7 @@ def main():
         weight_decay=0.1,
         max_grad_norm=1.0,
         bf16=True,
+        optim="adamw_bnb_8bit",  # 8-bit Adam: optimizer states ~12GB->~3GB, fits 3B on 40GB
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=5,

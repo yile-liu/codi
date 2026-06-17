@@ -7,10 +7,12 @@ cache consumed by train_sft.py/train_codi.py via `--cache_dir`.
 from __future__ import annotations
 
 import argparse
+import json
 import multiprocessing as mp
 import os
 import shutil
 import signal
+import time
 from pathlib import Path
 
 os.environ.setdefault("USE_TORCH", "0")
@@ -30,7 +32,12 @@ def _alarm(*_):
     raise TimeoutError
 
 
+def _no_net(*_a, **_k):
+    raise OSError("network disabled")
+
+
 def _init(model, max_len, max_frames, mode, timeout):
+    import socket
     from transformers import AutoTokenizer
 
     global TOK, MAX_LEN, MAX_FRAMES, MODE, TIMEOUT
@@ -38,6 +45,8 @@ def _init(model, max_len, max_frames, mode, timeout):
     add_trace_tokens(TOK)
     MAX_LEN, MAX_FRAMES, MODE, TIMEOUT = max_len, max_frames, mode, timeout
     signal.signal(signal.SIGALRM, _alarm)
+    # DNS (getaddrinfo) blocks in C and ignores SIGALRM, hanging the pool.
+    socket.getaddrinfo = socket.create_connection = socket.socket = _no_net
 
 
 def _work(row):
@@ -63,10 +72,10 @@ def main():
     ap.add_argument("--mode", choices=["sft", "codi"], default="sft")
     ap.add_argument("--sources", nargs="+", default=["mbpp", "humaneval", "pyx"])
     ap.add_argument("--n_samples", type=int, default=-1)
-    ap.add_argument("--max_seq_len", type=int, default=4096)
-    ap.add_argument("--max_frames", type=int, default=-1)
+    ap.add_argument("--max_seq_len", type=int, default=6144)
+    ap.add_argument("--max_frames", type=int, default=256)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 1))
+    ap.add_argument("--workers", type=int, default=max(1, mp.cpu_count() // 2))
     ap.add_argument("--chunksize", type=int, default=32)
     ap.add_argument("--timeout", type=int, default=5)
     ap.add_argument("--overwrite", action="store_true")
@@ -83,18 +92,33 @@ def main():
         shutil.rmtree(out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"{len(rows)} rows -> {args.out} ({args.mode}, workers={args.workers})", flush=True)
+    n = len(rows)
+    print(f"{n} rows -> {args.out} ({args.mode}, workers={args.workers})", flush=True)
+    init_args = (args.model, args.max_seq_len, args.max_frames, args.mode, args.timeout)
     if args.workers == 1:
-        _init(args.model, args.max_seq_len, args.max_frames, args.mode, args.timeout)
-        built = [_work(r) for r in rows]
+        _init(*init_args)
+        results = map(_work, rows)
     else:
-        with mp.Pool(args.workers, _init, (args.model, args.max_seq_len, args.max_frames, args.mode, args.timeout)) as pool:
-            built = pool.map(_work, rows, chunksize=args.chunksize)
+        pool = mp.Pool(args.workers, _init, init_args)
+        results = pool.imap_unordered(_work, rows, chunksize=args.chunksize)
+
+    built, t0 = [], time.time()
+    for i, ex in enumerate(results, 1):
+        built.append(ex)
+        if i % 2000 == 0 or i == n:
+            ok = sum(x is not None for x in built)
+            print(f"  {i}/{n}  ok={ok}  {i / (time.time() - t0):.0f} rows/s", flush=True)
+    if args.workers > 1:
+        pool.close()
+        pool.join()
 
     examples = [ex for ex in built if ex is not None]
     if not examples:
         raise RuntimeError("0 examples built")
     Dataset.from_list(examples).save_to_disk(str(out))
+
+    cfg = {**vars(args), "n_rows": n, "n_saved": len(examples)}
+    (out / "precompute_config.json").write_text(json.dumps(cfg, indent=2))
     print(f"saved {len(examples)}/{len(rows)} examples", flush=True)
 
 

@@ -140,6 +140,10 @@ class CodiTrainer(Trainer):
         os.makedirs(output_dir, exist_ok=True)
         torch.save(state_dict or self.model.state_dict(), os.path.join(output_dir, WEIGHTS_NAME))
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
+        # also write config/tokenizer/projector so each ckpt is eval-loadable (small, no weight dup).
+        self.model.model.config.save_pretrained(output_dir)
+        self.tok.save_pretrained(output_dir)
+        torch.save(self.model.prj.state_dict(), os.path.join(output_dir, "thought_projector.pt"))
 
 
 def main():
@@ -147,7 +151,7 @@ def main():
     ap.add_argument("--model", required=True)  # Stage-1 SFT dir
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--sources", nargs="+", default=["mbpp", "humaneval", "pyx"])
-    ap.add_argument("--cache_dir", default=None)  # load offline tokenized examples from precompute.py
+    ap.add_argument("--cache_dir", default="data/cache/codi_train")  # offline tokenized examples from precompute.py
     ap.add_argument("--n_samples", type=int, default=-1)
     ap.add_argument("--max_seq_len", type=int, default=4096)
     ap.add_argument("--max_frames", type=int, default=-1)
@@ -191,10 +195,11 @@ def main():
         weight_decay=0.1,
         max_grad_norm=1.0,
         bf16=True,
+        optim="paged_adamw_8bit",
         ddp_find_unused_parameters=False,
         logging_steps=5,
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=None,
         report_to=report_to,
         remove_unused_columns=False,
         label_names=[],
@@ -203,6 +208,7 @@ def main():
         model=model, args=targs, train_dataset=ds,
         data_collator=lambda b: {"examples": b},
     )
+    trainer.tok = tok
     # Native checkpoints (CodiModel wrapper + optimizer) auto-resume if interrupted.
     ckpt = get_last_checkpoint(args.output_dir) if os.path.isdir(args.output_dir) else None
     trainer.train(resume_from_checkpoint=ckpt)

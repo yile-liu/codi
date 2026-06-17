@@ -111,13 +111,13 @@ def build_codi_dataset(
     rows = rows_for_sources(sources)
     if n_samples > 0:
         rows = rows[:n_samples]
-    out = [
-        build_codi_example(
-            r["code"], r["input"], tokenizer,
-            max_seq_len=max_seq_len, max_frames=max_frames,
-        )
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        try:
+            out.append(build_codi_example(r["code"], r["input"], tokenizer,
+                                          max_seq_len=max_seq_len, max_frames=max_frames))
+        except Exception:
+            pass
     return [ex for ex in out if ex is not None]
 
 
