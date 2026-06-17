@@ -26,7 +26,7 @@ from wb import wandb_init
 
 class CodiModel(nn.Module):
     def __init__(self, base, *, latent_start_id, latent_end_id, latent_steps,
-                 a=1.0, b=1.0, g=1.0, kd_all_layers=False):
+                 a=1.0, b=1.0, g=1.0, kd_layers=None, single_anchor=False):
         super().__init__()
         self.model = base
         h = base.config.hidden_size
@@ -39,10 +39,11 @@ class CodiModel(nn.Module):
         self.prj.to(device=ref.device, dtype=ref.dtype)
         self.ls_id, self.le_id = latent_start_id, latent_end_id
         self.latent_steps, self.a, self.b, self.g = latent_steps, a, b, g
-        self.kd_all_layers = kd_all_layers
+        self.kd_layers = kd_layers  # None -> all layers
+        self.single_anchor = single_anchor  # KD at last span only (vanilla-CODI ablation)
 
-    def _kd(self, hidden_states):
-        return hidden_states[1:] if self.kd_all_layers else (hidden_states[-1],)
+    def _kd(self, hs):
+        return hs[1:] if self.kd_layers is None else tuple(hs[l] for l in self.kd_layers)
 
     def _emb(self, ids):
         return self.model.get_input_embeddings()(ids)
@@ -111,6 +112,8 @@ class CodiModel(nn.Module):
             kd_pos = [len(prompt) + j for _, j in spans]
             t_ce, t_kd = self._teacher(full, labels, kd_pos)
             s_ce, s_kd = self._student(prompt, trace, spans)
+            if self.single_anchor:  # keep only the last frame's anchor (per layer)
+                t_kd, s_kd = [t[-1:] for t in t_kd], [s[-1:] for s in s_kd]
             kd = torch.stack([F.smooth_l1_loss(s.reshape(-1), t.reshape(-1).detach())
                               for s, t in zip(s_kd, t_kd)]).mean()
             tl, sl, kl = tl + t_ce, sl + s_ce, kl + kd
@@ -157,7 +160,8 @@ def main():
     ap.add_argument("--alpha", type=float, default=1.0)
     ap.add_argument("--beta", type=float, default=1.0)
     ap.add_argument("--gamma", type=float, default=1.0)
-    ap.add_argument("--kd_all_layers", action="store_true")
+    ap.add_argument("--kd_layers", nargs="+", type=int, default=None)  # default: all layers
+    ap.add_argument("--single_anchor", action="store_true")  # KD at last frame only (vanilla CODI)
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, use_fast=True)
@@ -167,7 +171,7 @@ def main():
     base.config.use_cache = True
     model = CodiModel(base, latent_start_id=ids["<|latent_start|>"], latent_end_id=ids["<|latent_end|>"],
                       latent_steps=args.latent_steps, a=args.alpha, b=args.beta, g=args.gamma,
-                      kd_all_layers=args.kd_all_layers)
+                      kd_layers=args.kd_layers, single_anchor=args.single_anchor)
 
     ds = build_codi_dataset(tok, sources=args.sources, cache_dir=args.cache_dir,
                             n_samples=args.n_samples, max_seq_len=args.max_seq_len, max_frames=args.max_frames)
