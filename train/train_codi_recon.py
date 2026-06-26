@@ -63,12 +63,12 @@ class CodiRecon(nn.Module):
         for kind, ids, kd in segs:
             if kind == "latent":
                 cache, prev_logits = self._latent_block(cache)
-                if self.recon_w and ids.numel():  # decode the dropped locals from the latent block
-                    rec_logits.append(prev_logits); rec_targets.append(ids[:1])
-                    if ids.numel() > 1:  # checkpoint to bound peak memory (recomputed in backward)
-                        kv = [t for ly in cache.layers for t in (ly.keys, ly.values)]
-                        logits = checkpoint(self._recon_decode, self._emb(ids[None]), *kv, use_reentrant=False)
-                        rec_logits.append(logits[:-1]); rec_targets.append(ids[1:])
+                if self.recon_w and ids.numel():  # decode all locals off-path; latent_end stays action_sep-only
+                    kv = [t for ly in cache.layers for t in (ly.keys, ly.values)]
+                    # reuse latent_end as the readout query (decodes l_0); cache already ends in latent_end
+                    emb = torch.cat([self._emb(self._le_tok), self._emb(ids[None])], dim=1)
+                    logits = checkpoint(self._recon_decode, emb, *kv, use_reentrant=False)
+                    rec_logits.append(logits[:-1]); rec_targets.append(ids)
                 continue
             ce_logits.append(prev_logits); ce_targets.append(ids[:1])
             out = self.model(inputs_embeds=self._emb(ids[None]), past_key_values=cache,
