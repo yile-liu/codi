@@ -9,6 +9,10 @@ Best checkpoint per config in **bold**. Latent diagnostics (why CODI plateaus) i
 | sft_lr2e5_bs32 | 1.5b | **0.5463** | ck6936 | 1k .472 / 2k .504 / 3k .530 / 4k .529 / 5k .539 / 6k .544 / **6936 .546** |
 | sft_lr1e5_bs64 | 3b   | **0.5112** | ck2000 | 500 .497 / 1k .499 / 1.5k .506 / **2k .511** / 2.5k .502 / 3k .505 / 3468 .507 |
 
+*`sft_lr2e5_bs32` weights = `sft{1.5b,3b}_lr1e5_bs32` (the recon base; label is legacy). Re-eval with the new
+fwd-counter reproduces 0.5463/0.5763 exactly (800/800 identical generations) ⇒ counter is non-invasive.
+Mean fwd=gen 558/553 (1.5b/3b).*
+
 ## CODI — co-trained shared-weight teacher
 | config | model | best pass@1 | ckpt | per-ckpt |
 |---|---|---|---|---|
@@ -36,13 +40,10 @@ Best checkpoint per config in **bold**. Latent diagnostics (why CODI plateaus) i
 | frozen hidden | 1.5b | **0.4413** | ck2500 | 500 .423 / 1k .426 / 1.5k .422 / 2k .439 / **2.5k .441** |
 
 ## CODI — recon (locals-reconstruction latent, shared-weight, ls1)
-| config | model | best pass@1 | ckpt | per-ckpt |
-|---|---|---|---|---|
-| recon rw1.0 | 3b   | **0.5300** | ck500  | **500 .530** |
-| recon rw1.0 | 1.5b | **0.5238** | ck1000 | 500 .494 / **1k .524** / 1.5k .504 / 2k .510 |
-| recon rw2.0 | 1.5b | **0.5175** | ck1500 | 500 .501 / 1k .514 / **1.5k .518** |
-
-*3b recon rw2.0 still training — no checkpoints saved yet; 3b rw1.0 only ck500 so far.*
+*Pre-fix recon numbers (0.52–0.54) **withdrawn**: a fall-back-to-explicit-trace artifact — the buggy `latent_end`
+made the model re-emit `$LOCALS` as text. Under latent-mode eval (force `<|action_sep|>` after the latent block)
+recon collapses to vanilla-CODI range (1.5b rw1 ck1000: 0.524→**0.444**); non-recon control unchanged (frozen
+3b logit 0.495→0.495). Real recon results pending the off-path `_fix` runs.*
 
 ## CODI — single-block (faithful arXiv 2502.21074)
 | config | model | best pass@1 | ckpt | per-ckpt |
@@ -52,10 +53,8 @@ Best checkpoint per config in **bold**. Latent diagnostics (why CODI plateaus) i
 
 ## Takeaways
 - **SFT >> CODI** on pass@1: best **SFT 3b = 0.576** vs best CODI 3b ≈ **0.49**. CODI 1.5b ~0.44–0.46.
-- **Recon latent is the first real lift**, at both sizes: 1.5b recon = **0.524** (vs ~0.44–0.46 for every
-  other CODI 1.5b, ≈96% of SFT 1.5b 0.546); 3b recon ck500 = **0.530**, already above all CODI 3b (~0.49).
-  Forcing the latent to reconstruct the dropped `$LOCALS` (H1/H2 capacity bottleneck) is what helps; rw1.0 and
-  rw2.0 land close (1.5b .524 / .518). At ~1/8 the generated tokens of explicit-trace SFT — see `DIAGNOSTICS.md` §G.
+- **Recon (pre-fix) gave no real gain**: its apparent lift was a fall-back-to-explicit artifact (see recon
+  section); under latent-mode eval it sits in vanilla-CODI range. Awaiting `_fix` runs.
 - **Frozen teacher does NOT lift latent pass@1**: 3b frozen logit .495 / hidden .491 ≈ co-trained .488.
   Removing teacher degradation (H3) doesn't help ⇒ the bottleneck is **latent capacity/encoding (H1/H2)** —
   the latent can't reach even the (now stronger 0.576) teacher target. See `DIAGNOSTICS.md`.

@@ -4,6 +4,7 @@ __pycache__/
 model_weights/
 /model_weights
 /tmp/
+logs/
 sft_*.log
 precompute_*.log
 codi_trace_*.log

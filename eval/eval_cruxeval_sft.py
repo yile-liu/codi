@@ -60,6 +60,7 @@ def main():
     ap.add_argument("--max_new_tokens", type=int, default=8192)
     ap.add_argument("--batch_size", type=int, default=8)
     ap.add_argument("--out", default="")
+    ap.add_argument("--latent_steps", type=int, default=1)  # unused; for shared launcher
     args = ap.parse_args()
 
     # DDP-style data parallelism for inference: torchrun sets RANK/WORLD_SIZE/LOCAL_RANK.
@@ -94,12 +95,15 @@ def main():
             out = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False,
                                  eos_token_id=eot_id, pad_token_id=eot_id)
         for j, r in enumerate(batch):
-            gen = tok.decode(out[j, enc["input_ids"].shape[1]:], skip_special_tokens=False)
+            gen_ids = out[j, enc["input_ids"].shape[1]:].tolist()
+            n_gen = gen_ids.index(eot_id) if eot_id in gen_ids else len(gen_ids)  # n_fwd==n_gen (no latent)
+            gen = tok.decode(gen_ids, skip_special_tokens=False)
             pred = extract_answer_trace_full(gen)
             ok = pred is not None and check_correct(r["code"], r["output"], pred)
             n_fmt += pred is not None
             n_correct += ok
-            results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok, "generation": gen})
+            results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok,
+                            "n_gen": n_gen, "n_fwd": n_gen, "generation": gen})
         if rank == 0 and (bi + 1) % 5 == 0:
             done = batch_start + len(batch)
             print(f"  rank0 {done}/{len(shard)}  pass@1={n_correct/done:.4f}", flush=True)
@@ -115,12 +119,14 @@ def main():
             results = [x for part in gathered for x in part]
 
     if rank == 0:
-        print(f"\nCRUXEval-O pass@1={n_correct / n:.4f}  "
-              f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)")
+        mean_fwd = sum(r["n_fwd"] for r in results) / n
+        mean_gen = sum(r["n_gen"] for r in results) / n
+        print(f"\nCRUXEval-O pass@1={n_correct / n:.4f}  valid_format={n_fmt / n:.4f}  "
+              f"(n={n}, greedy)  mean_fwd={mean_fwd:.1f} mean_gen={mean_gen:.1f}")
         if args.out:
             with open(args.out, "w") as f:
-                json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n,
-                           "n": n, "results": results}, f, indent=2)
+                json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n, "n": n,
+                           "mean_fwd": mean_fwd, "mean_gen": mean_gen, "results": results}, f, indent=2)
     if ddp:
         dist.destroy_process_group()
 

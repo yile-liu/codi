@@ -35,23 +35,28 @@ def load_codi(m, latent_steps, dev):
 
 
 @torch.no_grad()
-def gen_latent(model, prompt_ids, ls_id, eot, max_new):
+def gen_latent(model, prompt_ids, ls_id, act_id, eot, max_new):
     dev = prompt_ids.device
+
+    def step(t):  # emit token t, advance cache; return its next-token logits
+        nonlocal cache
+        o = model.model(input_ids=torch.tensor([[t]], device=dev), past_key_values=cache, use_cache=True)
+        cache = o.past_key_values
+        return o.logits[:, -1]
+
     o = model.model(input_ids=prompt_ids[None], use_cache=True)
     cache, logits = o.past_key_values, o.logits[:, -1]
-    out = []
-    for _ in range(max_new):
+    out, n_fwd = [], 0  # n_fwd: decode forward passes = text tokens + latent-block steps (latent_steps+2 each)
+    while len(out) < max_new:
         t = int(logits.argmax(-1))
         if t == eot:
             break
-        out.append(t)
-        o = model.model(input_ids=torch.tensor([[t]], device=dev), past_key_values=cache, use_cache=True)
-        cache = o.past_key_values
-        if t == ls_id:  # drop $LOCALS, insert latent block; its logits predict <|action_sep|>
-            cache, logits = model._latent_block(cache)
-        else:
-            logits = o.logits[:, -1]
-    return out
+        out.append(t); logits = step(t); n_fwd += 1
+        if t == ls_id:  # latent block replaces $LOCALS; force <|action_sep|> (latent mode, no locals text)
+            cache, _ = model._latent_block(cache)
+            n_fwd += model.latent_steps + 2
+            out.append(act_id); logits = step(act_id); n_fwd += 1
+    return out, n_fwd
 
 
 def main():
@@ -72,7 +77,7 @@ def main():
     torch.cuda.set_device(local_rank)
 
     tok, ids, model = load_codi(args.model, args.latent_steps, local_rank)
-    ls_id, eot = ids["<|line_sep|>"], ids["<|end_of_text|>"]
+    ls_id, act_id, eot = ids["<|line_sep|>"], ids["<|action_sep|>"], ids["<|end_of_text|>"]
 
     rows = load_cruxeval()
     if args.n_samples > 0:
@@ -85,13 +90,14 @@ def main():
     for i, r in enumerate(shard):
         enc = tok(_prompt_str(r["code"], r["input"]), return_tensors="pt",
                   add_special_tokens=False).to(local_rank)
-        gen = tok.decode(gen_latent(model, enc["input_ids"][0], ls_id, eot, args.max_new_tokens),
-                         skip_special_tokens=False)
+        gen_ids, n_fwd = gen_latent(model, enc["input_ids"][0], ls_id, act_id, eot, args.max_new_tokens)
+        gen = tok.decode(gen_ids, skip_special_tokens=False)
         pred = extract_answer_trace_full(gen)
         ok = pred is not None and check_correct(r["code"], r["output"], pred)
         n_fmt += pred is not None
         n_correct += ok
-        results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok, "generation": gen})
+        results.append({"id": r["id"], "expected": r["output"], "predicted": pred, "correct": ok,
+                        "n_gen": len(gen_ids), "n_fwd": n_fwd, "generation": gen})
         if rank == 0 and (i + 1) % 20 == 0:
             print(f"  rank0 {i+1}/{len(shard)}  pass@1={n_correct/(i+1):.4f}", flush=True)
 
@@ -105,12 +111,15 @@ def main():
             results = [x for part in gathered for x in part]
 
     if rank == 0:
+        mean_fwd = sum(r["n_fwd"] for r in results) / n
+        mean_gen = sum(r["n_gen"] for r in results) / n
         print(f"\nCRUXEval-O latent pass@1={n_correct / n:.4f}  "
-              f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)")
+              f"valid_format={n_fmt / n:.4f}  (n={n}, greedy)  "
+              f"mean_fwd={mean_fwd:.1f} mean_gen={mean_gen:.1f}")
         if args.out:
             with open(args.out, "w") as f:
-                json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n,
-                           "n": n, "results": results}, f, indent=2)
+                json.dump({"pass_at_1": n_correct / n, "valid_format": n_fmt / n, "n": n,
+                           "mean_fwd": mean_fwd, "mean_gen": mean_gen, "results": results}, f, indent=2)
     if ddp:
         dist.destroy_process_group()
 
