@@ -15,6 +15,8 @@ with the prompt prefix set to ``-100``).
 
 from __future__ import annotations
 
+import json
+
 from .ground_truth import ground_truth_trace, make_trace_context
 from .trace_format import (
     ACTION_SEP,
@@ -62,7 +64,13 @@ def _tokenize_trace(code, input_str, tokenizer, *, max_seq_len, max_frames):
             i += 1
     if not spans:
         return None
-    return prompt_ids, trace_ids, spans
+    recon_targets = [
+        tokenizer.encode(json.dumps(f.full_locals or {}, sort_keys=True), add_special_tokens=False)
+        for f in frames if f.event == TraceEvent.LINE
+    ]
+    if len(recon_targets) != len(spans):
+        return None
+    return prompt_ids, trace_ids, spans, recon_targets
 
 
 def build_example(code, input_str, tokenizer, *, max_seq_len, max_frames=-1):
@@ -70,7 +78,7 @@ def build_example(code, input_str, tokenizer, *, max_seq_len, max_frames=-1):
     r = _tokenize_trace(code, input_str, tokenizer, max_seq_len=max_seq_len, max_frames=max_frames)
     if r is None:
         return None
-    prompt_ids, trace_ids, _ = r
+    prompt_ids, trace_ids, _, _ = r
     return prompt_ids + trace_ids, [IGNORE_INDEX] * len(prompt_ids) + trace_ids
 
 
@@ -79,8 +87,9 @@ def build_codi_example(code, input_str, tokenizer, *, max_seq_len, max_frames=-1
     r = _tokenize_trace(code, input_str, tokenizer, max_seq_len=max_seq_len, max_frames=max_frames)
     if r is None:
         return None
-    prompt_ids, trace_ids, spans = r
-    return {"prompt_ids": prompt_ids, "trace_ids": trace_ids, "spans": spans}
+    prompt_ids, trace_ids, spans, recon_targets = r
+    return {"prompt_ids": prompt_ids, "trace_ids": trace_ids, "spans": spans,
+            "recon_targets": recon_targets}
 
 
 def _load_cache(cache_dir, n_samples):
@@ -93,11 +102,14 @@ def _load_cache(cache_dir, n_samples):
 
 def build_codi_dataset(
     tokenizer, *, sources=("mbpp", "humaneval", "pyx"), n_samples: int = -1,
-    max_seq_len: int = 4096, max_frames: int = -1, cache_dir: str | None = None
+    max_seq_len: int = 4096, max_frames: int = -1, cache_dir: str | None = None,
+    require_recon_targets: bool = False,
 ) -> list[dict]:
     """CODI examples (prompt/reasoning/answer) over ``sources``, or a precomputed cache."""
     if cache_dir:
         ex = _load_cache(cache_dir, n_samples)
+        if require_recon_targets and any("recon_targets" not in e for e in ex):
+            raise ValueError(f"{cache_dir} lacks recon_targets; rerun precompute.py for recon training")
         return [e for e in ex if len(e["prompt_ids"]) + len(e["trace_ids"]) <= max_seq_len]
     rows = rows_for_sources(sources)
     if n_samples > 0:

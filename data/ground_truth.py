@@ -60,7 +60,7 @@ def ground_truth_trace(
             rendered[name] = r
             out[name] = DIFF_PLACEHOLDER if prev.get(name) == r else r
         scope_prev[id(frame)] = rendered
-        return out
+        return out, rendered
 
     def trace(frame, event, arg):
         nonlocal entry
@@ -76,9 +76,11 @@ def ground_truth_trace(
         if frame.f_code.co_filename != _FILENAME:
             return None
         if event == "call":
-            frames.append(TraceFrame(event=TraceEvent.CALL, source=source(frame), locals=diff_locals(frame)))
+            loc, full = diff_locals(frame)
+            frames.append(TraceFrame(event=TraceEvent.CALL, source=source(frame), locals=loc, full_locals=full))
         elif event == "line":
-            frames.append(TraceFrame(event=TraceEvent.LINE, source=source(frame), locals=diff_locals(frame)))
+            loc, full = diff_locals(frame)
+            frames.append(TraceFrame(event=TraceEvent.LINE, source=source(frame), locals=loc, full_locals=full))
         elif event == "return":
             frames.append(TraceFrame(event=TraceEvent.RETURN, source=source(frame), arg=render_value(arg)))
         elif event == "exception":

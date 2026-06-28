@@ -49,7 +49,7 @@ def shared_teacher(model, full, labels, pos, kd_layers=None):
 
 
 class CodiTrainer(Trainer):
-    _SUB = ("teacher_loss", "student_loss", "kd_loss", "recon_loss")
+    _SUB = ("teacher_loss", "student_loss", "kd_loss", "recon_loss", "recon_trunc")
 
     def compute_loss(self, model, inputs, return_outputs=False, **kw):
         core = model.module if hasattr(model, "module") else model

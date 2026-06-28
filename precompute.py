@@ -66,6 +66,20 @@ def _work(row):
         signal.alarm(0)
 
 
+def _recon_stats(examples):
+    lens = sorted(len(x) for ex in examples for x in ex.get("recon_targets", []))
+    if not lens:
+        return {}
+    pct = lambda q: lens[min(len(lens) - 1, int(q * (len(lens) - 1)))]
+    return {
+        "recon_frames": len(lens),
+        "recon_len_mean": sum(lens) / len(lens),
+        "recon_len_p90": pct(0.90),
+        "recon_len_p99": pct(0.99),
+        "recon_len_max": lens[-1],
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -117,7 +131,12 @@ def main():
         raise RuntimeError("0 examples built")
     Dataset.from_list(examples).save_to_disk(str(out))
 
-    cfg = {**vars(args), "n_rows": n, "n_saved": len(examples)}
+    stats = _recon_stats(examples)
+    if stats:
+        print("recon full-locals lengths: "
+              f"mean={stats['recon_len_mean']:.1f} p90={stats['recon_len_p90']} "
+              f"p99={stats['recon_len_p99']} max={stats['recon_len_max']}", flush=True)
+    cfg = {**vars(args), "n_rows": n, "n_saved": len(examples), **stats}
     (out / "precompute_config.json").write_text(json.dumps(cfg, indent=2))
     print(f"saved {len(examples)}/{len(rows)} examples", flush=True)
 

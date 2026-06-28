@@ -74,6 +74,7 @@ class TraceFrame:
     source: str
     locals_str: str = ""
     locals: dict[str, str] | None = None
+    full_locals: dict[str, str] | None = None
     arg: str | None = None
     malformed: bool = False
     # Token counts (filled when a tokenizer is available); used for the

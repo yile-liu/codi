@@ -27,7 +27,13 @@ def load_codi(m, latent_steps, dev):
     model = CodiModel(base, latent_start_id=ids["<|latent_start|>"],
                       latent_end_id=ids["<|latent_end|>"], latent_steps=latent_steps)
     if os.path.exists(f"{m}/pytorch_model.bin"):  # epoch checkpoint: full CodiModel
-        model.load_state_dict(torch.load(f"{m}/pytorch_model.bin", map_location="cpu"))
+        sd = torch.load(f"{m}/pytorch_model.bin", map_location="cpu")
+        drop = [k for k in sd if k.startswith("recon_query.")]
+        for k in drop:
+            sd.pop(k)
+        if drop:
+            print(f"ignored {len(drop)} recon-only keys", flush=True)
+        model.load_state_dict(sd)
     else:  # final export: backbone safetensors + separate projector
         model.model = AutoModelForCausalLM.from_pretrained(m, torch_dtype=torch.bfloat16)
         model.prj.load_state_dict(torch.load(f"{m}/thought_projector.pt", map_location="cpu"))
